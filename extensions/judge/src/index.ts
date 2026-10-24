@@ -67,6 +67,7 @@ async function main(): Promise<void> {
 	const sessionFactory = createPiSessionFactory({
 		provider: config.provider,
 		model: config.model,
+		authFile: config.piAuthFile,
 	});
 
 	const judge: JudgeFn = (runId, { maxCostUsd }) =>
@@ -111,6 +112,7 @@ async function main(): Promise<void> {
 							sessionFactory: createPiSessionFactory({
 								provider: calibration.provider,
 								model: calibration.model,
+								authFile: config.piAuthFile,
 							}),
 							maxRetries: config.maxRetries,
 							maxPages: config.maxPages,

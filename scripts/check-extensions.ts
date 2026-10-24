@@ -44,7 +44,7 @@ import { join, relative, resolve } from "node:path";
 const REPO_ROOT = resolve(import.meta.dir, "..");
 
 /** The per-extension scripts this guard runs, in order, when declared. */
-export const EXTENSION_GATES = ["typecheck", "lint"] as const;
+export const EXTENSION_GATES = ["typecheck", "lint", "test:compat"] as const;
 
 export type ExtensionGate = (typeof EXTENSION_GATES)[number];
 

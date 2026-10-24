@@ -40,11 +40,13 @@
  * structured failed outcome rather than rejecting `runs.create`.
  */
 
-import { extractAgentEventEnvelope } from "../../core/event-envelope.ts";
 import type { ProxyHandle, StartProxyOptions } from "../../sandbox/proxy-server.ts";
 import { runSandboxed } from "../../sandbox/sandbox.ts";
 import type { SandboxProfile, SpawnCommand, SpawnResult } from "../../sandbox/types.ts";
-import type { AdapterRuntimeEvent, AgentRuntimeAdapter } from "../adapters/index.ts";
+import type { AgentRuntimeAdapter } from "../adapters/index.ts";
+import { operatorAuthFor } from "../adapters/index.ts";
+import { RuntimeCompletion } from "../adapters/runtime-completion.ts";
+import { runtimeMetadataEvents } from "../adapters/runtime-metadata.ts";
 import type { AgentFrontmatter } from "../adapters/types.ts";
 import type { RunSpec } from "../contract.ts";
 import {
@@ -62,6 +64,7 @@ export const MID_RUN_INBOX_POLL_MS = 200;
 export type StartProxyFn = (opts: StartProxyOptions) => Promise<ProxyHandle>;
 
 export interface DriveDeps {
+	readonly piAuthFile?: string;
 	/** Spawn seam — defaults to `runSandboxed` (tests inject a fake child). */
 	readonly spawn?: (profile: SandboxProfile, command: SpawnCommand) => Promise<SpawnResult>;
 	/**
@@ -98,12 +101,6 @@ export function readSpecFrontmatter(
 		return undefined;
 	}
 	return raw as AgentFrontmatter;
-}
-
-/** True when a parsed event is the agent's terminal envelope (`result` / `agent_end`). */
-function isTerminalEnvelope(ev: AdapterRuntimeEvent): boolean {
-	const env = extractAgentEventEnvelope(ev);
-	return env !== null && (env.type === "result" || env.type === "agent_end");
 }
 
 async function* readLines(stream: ReadableStream<Uint8Array>): AsyncGenerator<string, void, void> {
@@ -156,6 +153,15 @@ export async function driveLocalRun(
 			terminalReason: "error",
 			errorMessage: message,
 		});
+	} finally {
+		const auth = operatorAuthFor(spec.runtimeId);
+		if (auth) {
+			await auth.cleanup(record.homePath).catch(() => {
+				deps.log?.(
+					"local-drive: private Pi credential cleanup failed; run-home teardown must retry",
+				);
+			});
+		}
 	}
 }
 
@@ -207,7 +213,7 @@ async function spawnAndPump(
 	const stdin = createStdinController(runtime, proc, useStdinHold);
 	const midRun = startMidRunSteering(store, record, runtime, proc, stdin, deps);
 	try {
-		const outcome = await pumpToExit(store, record, runtime, proc, stdin, deps);
+		const outcome = await pumpToExit(store, record, runtime, proc, stdin, deps, runCommand);
 		terminalize(store, record, runProfile, proc, outcome, deps);
 		log(`local-drive: '${runtime.runtimeId}' exited ${outcome.exitCode}`);
 	} finally {
@@ -224,7 +230,7 @@ async function spawnAndPump(
 
 interface PumpOutcome {
 	readonly exitCode: number;
-	readonly sawTerminalEnvelope: boolean;
+	readonly completion: RuntimeCompletion;
 	readonly streamError: unknown;
 }
 
@@ -236,16 +242,29 @@ async function pumpToExit(
 	proc: SpawnResult,
 	stdin: StdinController,
 	deps: DriveDeps,
+	command: SpawnCommand,
 ): Promise<PumpOutcome> {
 	const now = deps.now ?? (() => new Date());
-	let sawTerminalEnvelope = false;
+	const completion = new RuntimeCompletion(runtime.runtimeId);
+	const parse =
+		runtime.createEventParser?.({
+			argv: command.argv,
+			stdin: typeof command.stdin === "string" ? command.stdin : undefined,
+		}) ?? runtime.parseEvents;
 	const pumpStdout = async (): Promise<void> => {
 		for await (const line of readLines(proc.stdout)) {
 			if (line.length === 0) continue;
-			const events = runtime.parseEvents?.(line) ?? [];
-			for (const ev of events) {
-				store.appendEvent(record, { kind: ev.kind, stream: ev.stream, payload: ev.payload }, now);
-				if (isTerminalEnvelope(ev)) sawTerminalEnvelope = true;
+			const events = parse?.(line) ?? [];
+			for (const event of events) {
+				const enriched = await runtimeMetadataEvents(
+					runtime,
+					{ runId: record.runId, workspacePath: record.workspacePath },
+					event,
+				);
+				for (const ev of enriched) {
+					store.appendEvent(record, { kind: ev.kind, stream: ev.stream, payload: ev.payload }, now);
+					completion.observe(ev);
+				}
 			}
 			await stdin.autoRespond(events);
 			await stdin.closeOnTrigger(events);
@@ -267,7 +286,7 @@ async function pumpToExit(
 			streamError = streamError ?? err;
 		}),
 	]);
-	return { exitCode, sawTerminalEnvelope, streamError };
+	return { exitCode, completion, streamError };
 }
 
 /** Map the pump outcome onto the record's terminal phase + witness events. */
@@ -285,7 +304,7 @@ function terminalize(
 	if (store.isTerminal(record)) return;
 	const now = deps.now ?? (() => new Date());
 	const { exitCode } = outcome;
-	if (record.cancelRequested) {
+	if (record.cancelRequested || outcome.completion.cancelled) {
 		store.terminalize(record, {
 			phase: "cancelled",
 			exitCode,
@@ -329,7 +348,9 @@ function terminalize(
 			now,
 		);
 	}
-	if (!outcome.sawTerminalEnvelope) emitSynthesizedTerminal(store, record, exitCode, now);
+	const failure = outcome.completion.failure(exitCode);
+	if (!outcome.completion.sawTerminal)
+		emitSynthesizedTerminal(store, record, exitCode, now, failure);
 	if (streamErrorMessage !== null) {
 		store.terminalize(record, {
 			phase: "failed",
@@ -341,13 +362,13 @@ function terminalize(
 	}
 	store.terminalize(
 		record,
-		exitCode === 0
+		failure === null
 			? { phase: "succeeded", exitCode, terminalReason: "completed" }
 			: {
 					phase: "failed",
 					exitCode,
 					terminalReason: "error",
-					errorMessage: `agent exited with code ${exitCode}`,
+					errorMessage: failure,
 				},
 	);
 }
@@ -362,6 +383,7 @@ function emitSynthesizedTerminal(
 	record: LocalRunRecord,
 	exitCode: number,
 	now: () => Date,
+	failure: string | null,
 ): void {
 	store.appendEvent(
 		record,
@@ -373,12 +395,7 @@ function emitSynthesizedTerminal(
 				synthesized: true,
 				reason: "agent_exit_without_terminal_envelope",
 				exitCode,
-				...(exitCode !== 0
-					? {
-							stopReason: "error",
-							errorMessage: `agent exited ${exitCode} without emitting a terminal envelope`,
-						}
-					: {}),
+				...(failure ? { stopReason: "error", errorMessage: failure } : {}),
 			},
 		},
 		now,

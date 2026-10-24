@@ -52,7 +52,11 @@ describe("what the seam must not lose (warren-c80e)", () => {
 		// warren-edc3 read `turn_end` and `agent_end` and nothing else. This
 		// move is behavior-neutral only while the union stays that set, so a
 		// future adapter adding a third type has to come here and say why.
-		expect([...providerErrorEnvelopeTypes()].sort()).toEqual(["agent_end", "turn_end"]);
+		expect([...providerErrorEnvelopeTypes()].sort()).toEqual([
+			"agent_end",
+			"agent_settled",
+			"turn_end",
+		]);
 	});
 
 	test("pi contributes its transcript dir but NOT the composition dirs above it", () => {

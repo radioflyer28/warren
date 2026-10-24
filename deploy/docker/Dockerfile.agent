@@ -86,17 +86,16 @@ RUN bun install -g \
     @os-eco/sapling-cli@0.3.2 \
     @os-eco/plot-cli@0.4.0 \
     @anthropic-ai/claude-code@2.1.150 \
-    @earendil-works/pi-coding-agent@0.84.2
+    @earendil-works/pi-coding-agent@1.4.0
 
 # claude-code's postinstall (download the platform-native `claude` binary) is
 # skipped by `bun install -g`; run it explicitly so /usr/local/bin/claude exists
 # before a run spawns it.
 RUN bun run /usr/local/install/global/node_modules/@anthropic-ai/claude-code/install.cjs
 
-# Pi ships a `#!/usr/bin/env node` shebang but targets bun; patch it to run under
-# bun directly (parity with the control-plane image, warren-a82b).
-RUN sed -i '1s|^#!/usr/bin/env node|#!/usr/bin/env bun|' \
-        /usr/local/install/global/node_modules/@earendil-works/pi-coding-agent/dist/cli.js
+# Launch Pi's declared CLI under its supported Node runtime.
+RUN node -e "const [major,minor]=process.versions.node.split('.').map(Number); if(major<22 || (major===22 && minor<19)) process.exit(1)" \
+    && test "$(pi --version)" = "1.4.0"
 
 WORKDIR /app
 

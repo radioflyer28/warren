@@ -24,23 +24,12 @@
  *      if it also declares `encodeSteeringMessage`, receives later inbox messages
  *      mid-run via a poll loop that writes them to the live stdin (warren-7a43,
  *      mirroring burrow's dispatcher).
- *   2. `prepareWorkspace` (the runtime's optional hook), then spawn the agent.
- *      For a stdin-held runtime the entrypoint holds stdin open after writing the
- *      prompt and closes it only when the runtime's terminal event (pi's
- *      `agent_end`) lands — pi exits the instant stdin closes mid-inference, so
- *      the old unconditional close-at-spawn made it exit with no work done
- *      (warren-7a43 / burrow-5db3). An idle watchdog drops stdin + kills if the
- *      close-trigger never arrives so a hung run can't pin the pod. All the
- *      stdin-hold machinery lives in `./agent-stdin-hold.ts`.
- *   3. Stream each stdout line through `runtime.parseEvents` and re-emit the
- *      structured events as NDJSON on THIS process's stdout — which becomes the
- *      pod log `K8sProvider.streamEvents` follows and `./log-parse.ts` parses
- *      (the envelope shape here round-trips through `toNormalizedEvent`). The
- *      agent's own terminal envelope (claude `state_change`/`result`) rides this
- *      stream, which is how warren detects logical completion and drives reap.
- *      An agent that exits WITHOUT one (a watchdog-killed pi, a crash) gets a
- *      synthesized `agent_end` emitted post-exit so the run still terminalizes
- *      instead of hanging `running` forever (warren-9a4a).
+ *   2. Prepare the workspace and spawn. Pi holds stdin through retries and
+ *      recovery until agent_settled. The bounded stdin-hold controller lives
+ *      in `./agent-stdin-hold.ts`.
+ *   3. Parse stdout with per-process adapter state and emit trusted NDJSON.
+ *      Session metadata precedes settlement. Unexpected exit without settlement
+ *      emits a synthesized failure so the control plane can finalize the run.
  *   4. On agent exit, run the finalize entrypoint in-process (`./finalize-
  *      entrypoint.ts`): it polls warren's parked reap intent, collects the
  *      workspace-dependent artifacts, and POSTs the `FinalizeResult`.
@@ -63,7 +52,10 @@ import {
 	type AdapterRuntimeEvent,
 	type AgentRuntimeAdapter,
 	allAdapters,
+	operatorAuthFor,
 } from "../adapters/index.ts";
+import { RuntimeCompletion, runtimeEventParser } from "../adapters/runtime-completion.ts";
+import { runtimeMetadataEvents } from "../adapters/runtime-metadata.ts";
 import {
 	type AgentEntrypointEnv,
 	type AgentEnvSource,
@@ -189,7 +181,7 @@ async function resolveAgentCommand(
  */
 export function isTerminalEnvelope(ev: AdapterRuntimeEvent): boolean {
 	const env = extractAgentEventEnvelope(ev);
-	return env !== null && (env.type === "result" || env.type === "agent_end");
+	return env !== null && (env.type === "result" || env.type === "agent_settled");
 }
 
 /**
@@ -205,6 +197,7 @@ function emitSynthesizedTerminalEnvelope(
 	out: (line: string) => void,
 	sawTerminalEnvelope: boolean,
 	exitCode: number,
+	failure: string | null,
 ): void {
 	if (sawTerminalEnvelope) return;
 	emitSystem(out, "state_change", {
@@ -212,12 +205,7 @@ function emitSynthesizedTerminalEnvelope(
 		synthesized: true,
 		reason: "agent_exit_without_terminal_envelope",
 		exitCode,
-		...(exitCode !== 0
-			? {
-					stopReason: "error",
-					errorMessage: `agent exited ${exitCode} without emitting a terminal envelope`,
-				}
-			: {}),
+		...(failure ? { stopReason: "error", errorMessage: failure } : {}),
 	});
 }
 
@@ -322,14 +310,22 @@ export async function runAgent(
 	});
 	hold.start();
 
+	const parse = runtimeEventParser(runtime, baseCommand);
 	const pumpStdout = async (): Promise<void> => {
 		for await (const line of readLines(proc.stdout)) {
 			hold.onOutput(); // any output resets the idle watchdog
 			if (line.length === 0) continue;
-			const events = [...(runtime.parseEvents?.(line) ?? [])];
-			for (const ev of events) {
-				out(formatEventLine(ev));
-				if (isTerminalEnvelope(ev)) sawTerminalEnvelope = true;
+			const events = [...(parse?.(line) ?? [])];
+			for (const event of events) {
+				const enriched = await runtimeMetadataEvents(
+					runtime,
+					{ runId: env.runId, workspacePath: env.workspacePath },
+					event,
+				);
+				for (const ev of enriched) {
+					out(formatEventLine(ev));
+					completion.observe(ev);
+				}
 			}
 			await hold.onEvents(events);
 		}
@@ -348,7 +344,7 @@ export async function runAgent(
 	// pipeline terminalizes ONLY on that envelope — without a synthesized
 	// fallback the run hangs in `running` while the pod polls finalize-intent
 	// forever.
-	let sawTerminalEnvelope = false;
+	const completion = new RuntimeCompletion(runtime.runtimeId);
 	let streamError: unknown;
 	let exitCode: number;
 	try {
@@ -376,7 +372,9 @@ export async function runAgent(
 			message: `event stream failed: ${streamError instanceof Error ? streamError.message : String(streamError)}`,
 		});
 	}
-	emitSynthesizedTerminalEnvelope(out, sawTerminalEnvelope, exitCode);
+	const failure = completion.failure(exitCode);
+	emitSynthesizedTerminalEnvelope(out, completion.sawTerminal, exitCode, failure);
+	exitCode = completion.effectiveExitCode(exitCode, streamError);
 	const phase = exitCode === 0 ? "succeeded" : "failed";
 	log(`agent-entrypoint: '${runtime.runtimeId}' exited ${exitCode} (${phase})`);
 	return { exitCode, phase, cancelledViaSignal: cancelledViaSignal.value };
@@ -413,6 +411,7 @@ export async function runAgentEntrypoint(
 ): Promise<number> {
 	const log = deps.log ?? ((m: string) => console.error(m));
 	const env = parseAgentEntrypointEnv(envSource);
+	operatorAuthFor(env.runtimeId)?.assertSupported("k8s", envSource.WARREN_PI_AUTH_FILE);
 	const result = await runAgent(env, deps);
 
 	const canFinalize = env.apiUrl !== undefined && env.apiToken !== undefined;

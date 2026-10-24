@@ -10,7 +10,7 @@
  * The module split (warren-041e / pl-9088 step 5):
  *
  *   - `./bridge.ts`           — `bridgeRunStream` pump
- *   - `./terminal-detect.ts`  — `detectRuntimeTerminal`, `isPiAgentEnd`
+ *   - `./terminal-detect.ts`  — `detectRuntimeTerminal`, `isPiAgentSettled`
  *   - `./run-state-poller.ts` — burrow `runs.get` fallback (warren-6596)
  *   - `./stats.ts`            — pi/claude cost persistence
  *   - `./recover.ts`          — `recoverActiveRunStreams` on warren boot
@@ -79,7 +79,7 @@ export {
 	type RecoverActiveRunStreamsResult,
 	recoverActiveRunStreams,
 } from "./recover.ts";
-export { detectRuntimeTerminal, isPiAgentEnd } from "./terminal-detect.ts";
+export { detectRuntimeTerminal, isPiAgentSettled } from "./terminal-detect.ts";
 export {
 	type BridgeLogger,
 	type BridgeRegistry,

@@ -29,7 +29,7 @@ import { providerStreamSource } from "./provider-source.ts";
 import { seedResumeUsage } from "./resume-usage.ts";
 import { defaultRunStateProbe, runStatePoller } from "./run-state-poller.ts";
 import { persistInStreamUsage, persistPiStatsDelta, snapshotStats } from "./stats.ts";
-import { detectRuntimeTerminal, isPiAgentEnd } from "./terminal-detect.ts";
+import { detectRuntimeTerminal, isPiAgentSettled } from "./terminal-detect.ts";
 import { recordToolCallRollup, resolveBridgeToolRuntime } from "./tool-call-rollup.ts";
 import { bridgeTurnMonitor, TurnMonitor, turnMonitorOptionsFromEnv } from "./turn-monitor.ts";
 import {
@@ -299,7 +299,7 @@ export async function bridgeRunStream(input: BridgeRunStreamInput): Promise<Brid
 				break;
 			}
 
-			if (!statsPersisted && isPiAgentEnd(event)) {
+			if (!statsPersisted && isPiAgentSettled(event)) {
 				statsPersisted = true;
 				if (input.piStats !== undefined) {
 					await persistPiStatsDelta({

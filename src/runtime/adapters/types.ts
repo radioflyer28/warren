@@ -40,6 +40,15 @@ import type { EventStream, InboxPriority, RuntimeId } from "../../core/wire.ts";
  * carries the evidence for that claim.
  */
 export interface AgentRuntimeAdapter {
+	readonly operatorAuth?: {
+		readonly fileEnv: string;
+		readOAuth(
+			source: string | undefined,
+			provider: string,
+		): Promise<Record<string, unknown> | null>;
+		assertSupported(backend: string, source: string | undefined): void;
+		cleanup(home: string): Promise<void>;
+	};
 	/** The canonical id, matching the {@link KNOWN_RUNTIME_IDS} member. */
 	readonly runtimeId: RuntimeId;
 	/**
@@ -102,6 +111,9 @@ export interface AgentRuntimeAdapter {
 	 * under `./parsers/__golden__/`.
 	 */
 	parseEvents?(line: string): AdapterRuntimeEvent[];
+
+	/** Allocate protocol state for one child process; never share it across runs. */
+	createEventParser?(command: SpawnCommand): (line: string) => AdapterRuntimeEvent[];
 
 	/**
 	 * Fold pending steering messages into the spawn's stdin payload
@@ -264,6 +276,10 @@ export interface AdapterSpawnContext {
 export interface AdapterPrepareContext {
 	readonly runId: string;
 	readonly workspacePath: string;
+	/** Private host-side HOME, never inside the repository. */
+	readonly homePath?: string;
+	/** Operator configuration, never sourced from frontmatter or RunSpec metadata. */
+	readonly piAuthFile?: string;
 	/** Per-run frontmatter (see {@link AgentFrontmatter}); carries the mulch arm. */
 	readonly frontmatter?: AgentFrontmatter;
 }

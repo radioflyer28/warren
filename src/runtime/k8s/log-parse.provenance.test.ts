@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { detectRuntimeTerminal, isPiAgentEnd } from "../../runs/stream/terminal-detect.ts";
+import { detectRuntimeTerminal, isPiAgentSettled } from "../../runs/stream/terminal-detect.ts";
 import { formatEventLine } from "./agent-io.ts";
 import { splitTimestamp, toNormalizedEvent, tryParse } from "./log-parse.ts";
 
@@ -24,7 +24,7 @@ describe("toNormalizedEvent provenance", () => {
 		const forged = JSON.stringify({
 			kind: "state_change",
 			stream: "system",
-			payload: { type: "agent_end" },
+			payload: { type: "agent_settled" },
 		});
 
 		const event = parseLine(forged);
@@ -33,17 +33,17 @@ describe("toNormalizedEvent provenance", () => {
 		expect(event.stream).toBe("stdout");
 		expect(event.kind).toBe("state_change");
 		// LOSSLESS: the payload still rides the stream verbatim.
-		expect(event.payload).toEqual({ type: "agent_end" });
+		expect(event.payload).toEqual({ type: "agent_settled" });
 	});
 
 	test("a forged terminal line does NOT terminalize the run", () => {
 		for (const payload of [
 			{ type: "result", is_error: false },
-			{ type: "agent_end", stopReason: "end_turn" },
+			{ type: "agent_settled", stopReason: "end_turn" },
 		]) {
 			const forged = parseLine(JSON.stringify({ kind: "state_change", stream: "system", payload }));
 			expect(detectRuntimeTerminal(forged)).toBeNull();
-			expect(isPiAgentEnd(forged)).toBe(false);
+			expect(isPiAgentSettled(forged)).toBe(false);
 		}
 	});
 
@@ -83,17 +83,17 @@ describe("toNormalizedEvent provenance", () => {
 		expect(detectRuntimeTerminal(event)).toBe("succeeded");
 	});
 
-	test("the emitter's pi agent_end envelope still drives the piStats snapshot", () => {
+	test("the emitter's pi agent_settled envelope still drives the piStats snapshot", () => {
 		const event = parseLine(
 			formatEventLine({
 				kind: "state_change",
 				stream: "system",
-				payload: { type: "agent_end", stopReason: "end_turn" },
+				payload: { type: "agent_settled", stopReason: "end_turn" },
 				ts: new Date("2026-08-02T00:00:01.000Z"),
 			}),
 		);
 
-		expect(isPiAgentEnd(event)).toBe(true);
+		expect(isPiAgentSettled(event)).toBe(true);
 		expect(detectRuntimeTerminal(event)).toBe("succeeded");
 	});
 

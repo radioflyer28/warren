@@ -20,6 +20,7 @@ import type { LocalRunRecord, LocalRunStore } from "./run-store.ts";
 
 /** Subset of DriveDeps this module needs — avoids a drive.ts circular import. */
 export interface PrepareDeps {
+	readonly piAuthFile?: string;
 	readonly startProxy?: (opts: StartProxyOptions) => Promise<ProxyHandle>;
 	readonly registry?: { get(id: string): AgentRuntimeAdapter | undefined };
 	readonly now?: () => Date;
@@ -132,6 +133,8 @@ export async function prepareSpawn(
 		await runtime.prepareWorkspace({
 			runId: spec.runId,
 			workspacePath: record.workspacePath,
+			homePath: record.homePath,
+			...(deps.piAuthFile ? { piAuthFile: deps.piAuthFile } : {}),
 			frontmatter,
 		});
 	}

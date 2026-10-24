@@ -12,7 +12,7 @@
  *
  * Critical dispatcher invariant (mx-d9b3ad, from the captured fixtures):
  * pi exits the instant stdin closes, even mid-inference. The adapter
- * declares `shouldCloseStdinOnEvent` returning true for `agent_end`,
+ * declares `shouldCloseStdinOnEvent` returning true for `agent_settled`,
  * which tells the dispatcher to write the prompt + hold stdin open, then
  * close it only after pi has emitted its terminal lifecycle envelope.
  * Real e2e runs without this hook produce only
@@ -20,7 +20,7 @@
  * (burrow-5db3).
  *
  * Mid-run steering (burrow SPEC §13.5, burrow-250d): because stdin is
- * held open until `agent_end`, the dispatcher can route inbox messages
+ * held open until `agent_settled`, the dispatcher can route inbox messages
  * arriving during an in-flight turn directly to pi by writing additional
  * `{"type":"prompt",...}` lines through the still-open stdin. The
  * adapter exposes that encoding via `encodeSteeringMessage`.
@@ -28,8 +28,16 @@
 
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { extractAgentEventEnvelope } from "../../core/event-envelope.ts";
 import { parsePiEvents } from "./parsers/pi.ts";
 import { buildPiArgv, PI_SESSION_DIR } from "./pi-argv.ts";
+import {
+	assertPiAuthSupported,
+	provisionPiOAuth,
+	readPiOAuth,
+	removePiCredentials,
+} from "./pi-auth.ts";
+import { createPiEventParser } from "./pi-protocol.ts";
 import { readNewestPiSessionId } from "./pi-session.ts";
 import {
 	encodeExtensionUiDecline,
@@ -49,6 +57,12 @@ import type {
 
 export const piAdapter: AgentRuntimeAdapter = {
 	runtimeId: "pi",
+	operatorAuth: {
+		fileEnv: "WARREN_PI_AUTH_FILE",
+		readOAuth: readPiOAuth,
+		assertSupported: assertPiAuthSupported,
+		cleanup: removePiCredentials,
+	},
 	/**
 	 * `.pi/sessions/` only, NOT `.pi/`.
 	 *
@@ -78,7 +92,9 @@ export const piAdapter: AgentRuntimeAdapter = {
 	 * warren-e281). This pair is the set `classifyEnvelope` hardcoded before
 	 * the seam existed, moved verbatim.
 	 */
-	terminalErrorEnvelopeTypes: ["turn_end", "agent_end"],
+	terminalErrorEnvelopeTypes: ["turn_end", "agent_end", "agent_settled"],
+
+	createEventParser: createPiEventParser,
 
 	buildSpawnCommand(ctx: AdapterSpawnContext): SpawnCommand {
 		return {
@@ -92,17 +108,11 @@ export const piAdapter: AgentRuntimeAdapter = {
 	},
 
 	/**
-	 * pi v0.74.0 exits the instant stdin closes (mx-d9b3ad), so the
-	 * dispatcher must hold stdin open until the run actually finishes.
-	 * `agent_end` is pi's terminal lifecycle envelope (collapsed by the
-	 * parser to `state_change` on `system` with the raw envelope preserved
-	 * in `payload`); closing stdin on that signal lets pi exit cleanly
-	 * through its RPC read loop instead of being killed mid-inference.
+	 * Pi 1.4.0 can continue after agent_end. Keep stdin open until its trusted
+	 * agent_settled carrier arrives, after retries, recovery and queued input.
 	 */
 	shouldCloseStdinOnEvent(event: AdapterRuntimeEvent): boolean {
-		if (event.kind !== "state_change") return false;
-		const payload = event.payload as { type?: unknown } | null | undefined;
-		return !!payload && payload.type === "agent_end";
+		return extractAgentEventEnvelope(event)?.type === "agent_settled";
 	},
 
 	/**
@@ -112,6 +122,10 @@ export const piAdapter: AgentRuntimeAdapter = {
 	 * never see this event.
 	 */
 	autoRespondToEvent(event: AdapterRuntimeEvent): { stdin: string } | undefined {
+		const payload = extractAgentEventEnvelope(event)?.payload;
+		if (payload?.type === "pi_rpc_probe") {
+			return { stdin: `${JSON.stringify({ type: "get_state", id: payload.id })}\n` };
+		}
 		if (!isPiExtensionUiRequest(event)) return undefined;
 		return { stdin: encodeExtensionUiDecline(event.payload) };
 	},
@@ -126,7 +140,7 @@ export const piAdapter: AgentRuntimeAdapter = {
 	 * in-flight agent can be steered by writing additional
 	 * `{"type":"prompt",...}` envelopes to the still-open sink (the
 	 * stdin-hold path established by burrow-5db3 keeps the FD live until
-	 * `agent_end`). Pi's RPC vocabulary is pinned to `prompt` here for the
+	 * `agent_settled`). Pi's RPC vocabulary is pinned to `prompt` here for the
 	 * same reason `encodeInboxMessage` uses it — that's the only command
 	 * shape proven against the captured fixtures; if a later pi version
 	 * exposes a dedicated `steer` / `follow_up` command this is the one
@@ -138,6 +152,13 @@ export const piAdapter: AgentRuntimeAdapter = {
 
 	async prepareWorkspace(ctx: AdapterPrepareContext): Promise<void> {
 		mkdirSync(join(ctx.workspacePath, PI_SESSION_DIR), { recursive: true });
+		if (ctx.piAuthFile && !ctx.homePath) throw new Error("Pi OAuth requires a private run home");
+		if (ctx.homePath)
+			await provisionPiOAuth(
+				ctx.homePath,
+				ctx.piAuthFile,
+				ctx.frontmatter?.provider ?? "anthropic",
+			);
 	},
 
 	async extractMetadata(

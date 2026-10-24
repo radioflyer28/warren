@@ -1,5 +1,17 @@
 # pi RPC golden traces
 
+## Supported baseline: 1.4.0
+
+`pi-v1.4.0-controlled-tools.jsonl` was captured from the actual 1.4.0 CLI
+with a local controlled provider, a tool call and queued steering. Paths and
+request identifiers are normalized; no operator credentials are used. Regenerate
+with `WARREN_PI_TEST_CLI` and `WARREN_PI_CAPTURE_DIR` as described in
+[Pi compatibility](../../../../../docs/pi-compatibility.md).
+
+The older traces below remain historical parser coverage only. Live completion
+uses `agent_settled`, not `agent_end`.
+
+
 > Ported verbatim from burrow's `src/runtime/parsers/__golden__/`
 > (warren-7933, plan pl-3007). The regeneration procedure below is
 > burrow's historical record; in warren the canonical goldens are

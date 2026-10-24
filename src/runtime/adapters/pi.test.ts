@@ -83,8 +83,10 @@ describe("piAdapter.buildSpawnCommand", () => {
 		const lines = (cmd?.stdin ?? "").split("\n").slice(0, -1);
 		expect(lines).toHaveLength(1);
 		expect(JSON.parse(lines[0] ?? "")).toEqual({
+			id: "warren:initial",
 			type: "prompt",
 			message: "fix the bug",
+			streamingBehavior: "steer",
 		});
 	});
 

@@ -191,7 +191,11 @@ describe("piAdapter.encodeSteeringMessage (burrow-250d)", () => {
 		// pendingMessages (atSpawn) or arrived mid-run (midRun) — both
 		// terminate the JSON envelope with \n so pi's line-delimited RPC
 		// loop processes it (burrow-faf5).
-		expect(midRun).toBe(atSpawn);
+		expect(JSON.parse(midRun ?? "{}")).toEqual({
+			...JSON.parse(atSpawn ?? "{}"),
+			id: expect.any(String),
+		});
+		expect(JSON.parse(midRun ?? "{}").id).not.toBe(JSON.parse(atSpawn ?? "{}").id);
 	});
 });
 
@@ -202,6 +206,7 @@ describe("piAdapter.autoRespondToEvent (extension_ui_request decline)", () => {
 				JSON.stringify({
 					type: "extension_ui_request",
 					id: "ui-req-42",
+					method: "confirm",
 					extensionId: "ext.foo",
 					prompt: "approve?",
 				}),
@@ -230,7 +235,9 @@ describe("piAdapter.shouldCloseStdinOnEvent (burrow-5db3)", () => {
 	// envelope arrives. The predicate below is what the dispatcher polls
 	// per persisted event.
 	test("returns true for agent_end state_change envelopes", () => {
-		const ev = piAdapter.parseEvents?.(JSON.stringify({ type: "agent_end" }))[0];
+		const ev = piAdapter.parseEvents?.(
+			JSON.stringify({ type: "agent_settled", aborted: false }),
+		)[0];
 		if (!ev) throw new Error("expected one event from agent_end envelope");
 		expect(piAdapter.shouldCloseStdinOnEvent?.(ev)).toBe(true);
 	});

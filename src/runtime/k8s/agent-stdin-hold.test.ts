@@ -45,9 +45,9 @@ const emptyInbox: AgentInboxHttp = { get: async () => ({ status: 200, body: { me
 
 /**
  * A pi-style runtime: declares `shouldCloseStdinOnEvent` (so the entrypoint must
- * hold stdin open until `agent_end`) and `encodeSteeringMessage` (so mid-run
+ * hold stdin open until `agent_settled`) and `encodeSteeringMessage` (so mid-run
  * inbox messages get written to the live stdin). Each stdout line is a
- * `{ type }` envelope; `agent_end` maps to a `state_change`/`system` event the
+ * `{ type }` envelope; `agent_settled` maps to a `state_change`/`system` event the
  * close-trigger predicate matches.
  */
 const piStyleRuntime: AgentRuntimeAdapter = {
@@ -57,14 +57,14 @@ const piStyleRuntime: AgentRuntimeAdapter = {
 	buildSpawnCommand: (ctx): SpawnCommand => ({ argv: ["pi"], stdin: ctx.prompt }),
 	parseEvents: (line): AdapterRuntimeEvent[] => {
 		const type = (JSON.parse(line) as { type: string }).type;
-		return type === "agent_end"
+		return type === "agent_settled"
 			? [{ kind: "state_change", stream: "system", payload: { type } }]
 			: [{ kind: "text", stream: "stdout", payload: { type } }];
 	},
 	shouldCloseStdinOnEvent: (ev): boolean => {
 		if (ev.kind !== "state_change") return false;
 		const payload = ev.payload as { type?: unknown } | null | undefined;
-		return !!payload && payload.type === "agent_end";
+		return !!payload && payload.type === "agent_settled";
 	},
 	encodeSteeringMessage: (m: SteeringMessage): { stdin: string } => ({
 		stdin: `/prompt ${m.body}\n`,
@@ -151,13 +151,13 @@ describe("runAgent · stdin-hold seam", () => {
 		JSON.stringify({ type: "response" }),
 		JSON.stringify({ type: "agent_start" }),
 		JSON.stringify({ type: "turn_start" }),
-		JSON.stringify({ type: "agent_end" }),
+		JSON.stringify({ type: "agent_settled" }),
 	];
 
-	test("holds stdin open for a pi-style runtime and closes it on agent_end", async () => {
+	test("holds stdin open for a pi-style runtime and closes it on agent_settled", async () => {
 		const capture = newCapture();
 		// exitMode "on-close": the fake resolves exit ONLY when closeStdin fires,
-		// so if the entrypoint failed to hold + close on agent_end this would hang.
+		// so if the entrypoint failed to hold + close on agent_settled this would hang.
 		const result = await runAgent(parseAgentEntrypointEnv(baseEnv()), {
 			registry: stubRegistry(piStyleRuntime),
 			spawn: scriptedSpawn(piTrace, capture, "on-close"),
@@ -192,7 +192,7 @@ describe("runAgent · stdin-hold seam", () => {
 
 	test("closes stdin defensively when the child exits before its close trigger", async () => {
 		const capture = newCapture();
-		// pi-style (holds stdin) but the trace never reaches agent_end and the
+		// pi-style (holds stdin) but the trace never reaches agent_settled and the
 		// child exits on its own — the finally block must still drop the FD.
 		const result = await runAgent(parseAgentEntrypointEnv(baseEnv()), {
 			registry: stubRegistry(piStyleRuntime),
@@ -213,7 +213,7 @@ describe("runAgent · stdin-hold seam", () => {
 
 	test("delivers a mid-run steering message to the held stdin", async () => {
 		const capture = newCapture();
-		// stdout stays open after turn_start; agent_end is emitted only once the
+		// stdout stays open after turn_start; agent_settled is emitted only once the
 		// steering write lands, so the run's terminal path is driven by the poll.
 		let controller!: ReadableStreamDefaultController<Uint8Array>;
 		const enc = new TextEncoder();
@@ -240,7 +240,7 @@ describe("runAgent · stdin-hold seam", () => {
 				writeStdin: async (chunk: string): Promise<void> => {
 					capture.writes.push(chunk);
 					// The steering write reached the child — now let it finish.
-					controller.enqueue(enc.encode(`${JSON.stringify({ type: "agent_end" })}\n`));
+					controller.enqueue(enc.encode(`${JSON.stringify({ type: "agent_settled" })}\n`));
 					controller.close();
 				},
 			};

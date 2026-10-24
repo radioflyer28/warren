@@ -8,6 +8,7 @@
 	"scripts": {
 		"start": "bun run src/index.ts",
 		"test": "bun test",
+		"test:compat": "bun test src/pi-sdk.test.ts src/pi-sdk-auth.test.ts src/pi-sdk-refresh.test.ts",
 		"typecheck": "tsc --noEmit -p tsconfig.json"
 	},
 	"license": "MIT",
@@ -19,7 +20,7 @@
 		"typescript": "^5.6.0"
 	},
 	"dependencies": {
-		"@earendil-works/pi-coding-agent": "^0.84.4",
+		"@earendil-works/pi-coding-agent": "1.4.0",
 		"@sinclair/typebox": "^0.34.52"
 	}
 }

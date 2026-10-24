@@ -35,6 +35,7 @@ export interface CalibrationConfig {
 }
 
 export interface JudgeConfig {
+	readonly piAuthFile?: string;
 	readonly warrenBaseUrl: string;
 	readonly warrenApiToken: string;
 	readonly provider: string;
@@ -105,6 +106,7 @@ export function resolveConfig(env: Record<string, string | undefined>): JudgeCon
 		warrenApiToken: required(env, "WARREN_API_TOKEN"),
 		provider: env.JUDGE_PROVIDER || DEFAULT_JUDGE_PROVIDER,
 		model: env.JUDGE_MODEL || DEFAULT_JUDGE_MODEL,
+		...(env.JUDGE_PI_AUTH_FILE ? { piAuthFile: env.JUDGE_PI_AUTH_FILE } : {}),
 		dbPath: env.JUDGE_DB_PATH || "./data/judge.db",
 		pollIntervalMs: positiveNumber(env, "JUDGE_POLL_INTERVAL_MS", 30_000),
 		maxCostUsdPerJudgment:
