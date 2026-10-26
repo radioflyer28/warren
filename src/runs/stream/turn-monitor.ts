@@ -2,24 +2,10 @@
  * `TurnMonitor` — in-turn inspection at the bridge's per-delta drop site
  * (warren-1f85 / warren-74a7, GitHub #1242).
  *
- * Between a `turn_start` and a `turn_end`, warren was blind: the bridge drops
- * every per-delta envelope before persisting (./delta-noise.ts), the watchdog
- * anchors on the newest persisted event with a 45-minute budget, and the
- * spend cap reads usage only at `turn_end` — so a provider stream that hung
- * mid-turn (warren-1f85: 45 idle minutes, $2.38) or degenerated into
- * whitespace-only reasoning deltas until the provider's length cap
- * (warren-74a7: five paid runs in a row) burned money with nothing to stop it.
- *
- * The monitor observes EVERY envelope the bridge sees (before the noise
- * drop) and tracks three things per turn: stall (wall time since the last
- * observed event while a turn is open — past the `WARREN_TURN_STALL_MS`
- * budget, default 10 minutes, it trips a `turn.stalled` cancel),
- * degeneration (consecutive whitespace-only `thinking` / `text` deltas —
- * non-empty, since empty deltas are legitimate wire noise — past a
- * count-or-byte `WARREN_TURN_DEGENERATE_*` threshold, a
- * `turn.degenerate` cancel), and in-turn spend (the cumulative
- * `partial.usage.cost.total` riding every delta, so the spend cap can trip
- * mid-turn rather than at `turn_end`).
+ * Observes trusted events before delta filtering. Detects stalled turns,
+ * whitespace degeneration and in-flight spend from Pi 1.4 message_update.usage.
+ * Completed turn totals replace provisional totals. Compaction usage adds to
+ * completed spend; agent_settled ends monitoring after recovery and steering.
  *
  * On a trip the bridge follows the `enforceBudgetCap` shape (./budget.ts):
  * evaluate, persist the known cost, emit the trip event, cancel through the
@@ -29,6 +15,7 @@
  * budgets, and both runtimes feed the same bridge (./provider-source.ts).
  */
 
+import { extractAgentEventEnvelope } from "../../core/event-envelope.ts";
 import type { RuntimeId } from "../../core/wire.ts";
 import type { Repos } from "../../db/repos/index.ts";
 import { isOverBudget } from "../cost-cap.ts";
@@ -173,8 +160,11 @@ export class TurnMonitor {
 	observe(event: StreamEventView): TurnTrip | null {
 		const now = this.#options.clock.now();
 		this.#lastEventAtMs = now;
-		const env = asRecord(event.payload);
-		if (env === null) return null;
+		const envelope = extractAgentEventEnvelope(
+			event.kind === "telemetry" ? { ...event, kind: "state_change" } : event,
+		);
+		if (envelope === null) return null;
+		const env = envelope.payload;
 		const type = env.type;
 		if (typeof type !== "string") return null;
 		if (type === "turn_start") {
@@ -184,7 +174,14 @@ export class TurnMonitor {
 			this.#turnActive = false;
 			this.#foldTurnEndCost(env);
 			this.#resetTurnCounters();
-		} else if (type === "agent_end") {
+		} else if (type === "compaction_end") {
+			const usage = asRecord(asRecord(env.result)?.usage);
+			const total = asRecord(usage?.cost)?.total;
+			if (typeof total === "number" && Number.isFinite(total) && total >= 0) {
+				this.#completedCostUsd += total;
+				this.#seenUsage = true;
+			}
+		} else if (type === "agent_settled") {
 			this.#turnActive = false;
 			this.#resetTurnCounters();
 		} else if (type === "message_update") {
@@ -196,7 +193,7 @@ export class TurnMonitor {
 
 	/**
 	 * Cumulative spend so far: completed `turn_end` totals plus the newest
-	 * in-flight `partial.usage.cost.total`; `null` when nothing usage-shaped
+	 * in-flight `message_update.usage.cost.total`; `null` when nothing usage-shaped
 	 * was observed. Used by the trip handler to persist what is known.
 	 */
 	cumulativeCostUsd(): number | null {
@@ -279,10 +276,9 @@ export class TurnMonitor {
 		return degenerateMinBytes !== null && this.#whitespaceBytes >= degenerateMinBytes;
 	}
 
-	/** Read the in-flight turn's cumulative cost off `partial.usage.cost.total`. */
+	/** Read the in-flight turn's cumulative cost off `message_update.usage.cost.total`. */
 	#observePartialCost(env: Record<string, unknown>): void {
-		const partial = asRecord(env.partial);
-		const usage = partial !== null ? asRecord(partial.usage) : null;
+		const usage = asRecord(env.usage);
 		const cost = usage !== null ? asRecord(usage.cost) : null;
 		const total = cost !== null ? cost.total : undefined;
 		if (typeof total === "number" && Number.isFinite(total) && total >= 0) {

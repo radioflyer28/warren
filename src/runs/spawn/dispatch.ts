@@ -16,6 +16,7 @@ import {
 	withMaxCostUsdOverride,
 	withProviderOverrides,
 } from "../../registry/schema.ts";
+import { operatorAuthFor } from "../../runtime/adapters/index.ts";
 import type { RunHandle, RunSpec, RuntimeProvider } from "../../runtime/contract.ts";
 import { interactiveRuntimeOverride } from "../../warren-config/schema.ts";
 import { composeRunBranch, resolveRunBranchPrefix } from "../branch.ts";
@@ -175,6 +176,12 @@ async function dispatchRun(input: SpawnRunInput): Promise<SpawnRunResult> {
 		agent.frontmatter,
 	);
 	assertNoKnownProviderModelMismatch(declaredProvider, declaredModel);
+	const runtimeOverride = interactiveRuntimeOverride(agent.name, projectDefaults);
+	const runtimeId = readRuntimeId(agent, runtimeOverride);
+	const auth = operatorAuthFor(runtimeId);
+	const authFile = auth ? (input.serverEnv ?? process.env)[auth.fileEnv] : undefined;
+	auth?.assertSupported(input.runtimeProvider.kind, authFile);
+	const piOAuth = await auth?.readOAuth(authFile, declaredProvider ?? "anthropic");
 
 	// Build the seed payload BEFORE creating the warren row so a malformed
 	// expertise_seed / pi_skills / pi_prompts section surfaces as a clean
@@ -203,7 +210,9 @@ async function dispatchRun(input: SpawnRunInput): Promise<SpawnRunResult> {
 		// anthropic credential is CLAUDE_CODE_OAUTH_TOKEN (subscription auth)
 		// gets `subscription_estimate` so costUsd reads as an estimate, not a
 		// bill. Resolved beside the provider env registry (core/providers.ts).
-		costBasis: resolveRunCostBasis(declaredProvider, input.serverEnv ?? process.env),
+		costBasis: piOAuth
+			? "subscription_estimate"
+			: resolveRunCostBasis(declaredProvider, input.serverEnv ?? process.env),
 		trigger: input.trigger ?? "manual",
 		...(input.seedId !== undefined ? { seedId: input.seedId } : {}),
 		...(input.mode !== undefined ? { mode: input.mode } : {}),
@@ -250,10 +259,6 @@ async function dispatchRun(input: SpawnRunInput): Promise<SpawnRunResult> {
 	);
 
 	const runEnv = composeRunEnv(run.id, projectDefaults?.qualityGate, input.serverEnv);
-
-	// warren-b802: per-project runtime override (planner stays 'builtin').
-	const runtimeOverride = interactiveRuntimeOverride(agent.name, projectDefaults);
-	const runtimeId = readRuntimeId(agent, runtimeOverride);
 
 	// warren-9ce3: read dispatcherHandle + dispatchOrigin (were dropped silently).
 	const log = bindRunLogger(input.logger, run.id, {

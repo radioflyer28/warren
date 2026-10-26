@@ -81,7 +81,7 @@ agents working the warren backlog, on warren.
 
 A **harness** is the coding-agent process warren drives. A **runtime** is the place where that workload runs.
 
-Warren's run model supports any harness with a Warren runtime adapter. The current distribution includes adapters for Pi and Claude Code. Agent roles such as planner, healer, and PR fixer compose prompts and policy on top of those harnesses.
+Warren's run model supports any harness with a Warren runtime adapter. The current distribution includes adapters for Pi and Claude Code. Pi 1.4.0 is the supported baseline. See [Pi installation, OAuth and upgrades](docs/pi-compatibility.md). Agent roles such as planner, healer, and PR fixer compose prompts and policy on top of those harnesses.
 
 Three runtime providers implement the same lifecycle. A casual install never picks one. `warren up` detects the machine and picks for you. Operators choose explicitly. See [Operators](#operators) for the topology table.
 

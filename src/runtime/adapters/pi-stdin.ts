@@ -8,6 +8,7 @@
  * per prompt / steering message and then waits for the agent to drain.
  */
 
+import { randomUUID } from "node:crypto";
 import type { AdapterRuntimeEvent, SteeringMessage } from "./types.ts";
 
 /**
@@ -22,7 +23,7 @@ import type { AdapterRuntimeEvent, SteeringMessage } from "./types.ts";
  */
 export function encodePiStdin(prompt: string, messages: readonly SteeringMessage[]): string {
 	const lines: string[] = [];
-	if (prompt.length > 0) lines.push(piPromptCommand(prompt));
+	if (prompt.length > 0) lines.push(piPromptCommand(prompt, "warren:initial"));
 	for (const m of messages) lines.push(piPromptCommandFromMessage(m));
 	return lines.map((l) => `${l}\n`).join("");
 }
@@ -38,8 +39,8 @@ export function piPromptCommandFromMessage(message: SteeringMessage): string {
 	return piPromptCommand(`${tag}${message.body}`);
 }
 
-function piPromptCommand(text: string): string {
-	return JSON.stringify({ type: "prompt", message: text });
+function piPromptCommand(text: string, id = `warren:prompt:${randomUUID()}`): string {
+	return JSON.stringify({ id, type: "prompt", message: text, streamingBehavior: "steer" });
 }
 
 /**
@@ -65,8 +66,13 @@ export function encodeExtensionUiDecline(payload: unknown): string {
  */
 export function isPiExtensionUiRequest(event: AdapterRuntimeEvent): boolean {
 	if (event.kind !== "state_change") return false;
-	const payload = event.payload as { type?: unknown } | null | undefined;
-	return !!payload && payload.type === "extension_ui_request";
+	const payload = event.payload as { type?: unknown; method?: string; id?: unknown } | null;
+	return (
+		event.stream === "system" &&
+		payload?.type === "extension_ui_request" &&
+		typeof payload.id === "string" &&
+		["select", "confirm", "input", "editor"].includes(payload.method ?? "")
+	);
 }
 
 function readStringField(payload: unknown, key: string): string | undefined {

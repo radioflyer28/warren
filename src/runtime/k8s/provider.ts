@@ -20,6 +20,7 @@
 
 import { ApiException, type CoreV1Api, type V1Pod } from "@kubernetes/client-node";
 import type { EnvLike } from "../../runs/spawn/callback-env.ts";
+import { operatorAuthFor } from "../adapters/index.ts";
 import type {
 	FinalizeIntent,
 	FinalizeResult,
@@ -222,8 +223,9 @@ export class K8sProvider implements RuntimeProvider {
 	 * decides whether to reconcile; we never silently adopt a stale pod.
 	 */
 	async create(spec: RunSpec): Promise<RunHandle> {
-		const api = this.deps.coreApi();
 		const env = this.deps.serverEnv ?? process.env;
+		operatorAuthFor(spec.runtimeId)?.assertSupported("k8s", env.WARREN_PI_AUTH_FILE);
+		const api = this.deps.coreApi();
 		const config = resolveK8sPodConfig(env, spec.projectResources);
 		const podName = podNameForRun(spec.runId);
 		// warren-c9ac (window 1): mint the init-container clone credential at

@@ -4,6 +4,7 @@
 .github
 node_modules
 src/ui/node_modules
+extensions/**/node_modules
 src/ui/dist
 src/ui/*.tsbuildinfo
 data

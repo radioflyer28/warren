@@ -6,9 +6,9 @@
  * Two roles:
  *   - `detectRuntimeTerminal` returns the warren-side outcome to reap
  *     with (or `null`) and powers the bridge's "break on terminal" loop.
- *   - `isPiAgentEnd` distinguishes pi's `agent_end` envelope for the
+ *   - `isPiAgentSettled` distinguishes pi's `agent_settled` envelope for the
  *     piStats out-of-band snapshot branch — both shapes ride the same
- *     state_change/system carrier, but only pi's `agent_end` should
+ *     state_change/system carrier, but only pi's `agent_settled` should
  *     trigger the pi-specific terminal snapshot.
  */
 
@@ -54,7 +54,11 @@ export function detectRuntimeTerminal(event: StreamEventView): RunTerminalState 
 	const env = extractAgentEventEnvelope(event);
 	if (env === null) return null;
 	if (env.type === "result") return env.payload.is_error === true ? "failed" : "succeeded";
-	if (env.type === "agent_end") {
+	if (
+		env.type === "agent_settled" ||
+		(env.type === "agent_end" && env.payload.synthesized === true)
+	) {
+		if (env.payload.aborted === true) return "cancelled";
 		const err = env.errorMessage;
 		const failed = env.stopReason === "error" || (typeof err === "string" && err.length > 0);
 		return failed ? "failed" : "succeeded";
@@ -73,6 +77,6 @@ export function detectRuntimeTerminal(event: StreamEventView): RunTerminalState 
  * `detectRuntimeTerminal`, which also accepts claude-code's `result`
  * envelope — piStats is a pi-only concern.
  */
-export function isPiAgentEnd(event: StreamEventView): boolean {
-	return extractAgentEventEnvelope(event)?.type === "agent_end";
+export function isPiAgentSettled(event: StreamEventView): boolean {
+	return extractAgentEventEnvelope(event)?.type === "agent_settled";
 }

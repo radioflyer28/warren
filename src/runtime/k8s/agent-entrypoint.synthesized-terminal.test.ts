@@ -69,14 +69,14 @@ const envelopeRuntime: AgentRuntimeAdapter = {
 	...textOnlyRuntime,
 	parseEvents: (line): AdapterRuntimeEvent[] => {
 		const type = (JSON.parse(line) as { type: string }).type;
-		return type === "agent_end"
+		return type === "agent_settled"
 			? [{ kind: "state_change", stream: "system", payload: { type } }]
 			: [{ kind: "text", stream: "stdout", payload: { type } }];
 	},
 	shouldCloseStdinOnEvent: (ev): boolean => {
 		if (ev.kind !== "state_change") return false;
 		const payload = ev.payload as { type?: unknown } | null | undefined;
-		return !!payload && payload.type === "agent_end";
+		return !!payload && payload.type === "agent_settled";
 	},
 };
 
@@ -110,7 +110,7 @@ function agentEndEnvelopes(lines: string[]): ParsedLine[] {
 		(l) =>
 			l.kind === "state_change" &&
 			l.stream === "system" &&
-			(l.payload as { type?: unknown }).type === "agent_end",
+			["agent_end", "agent_settled"].includes(String((l.payload as { type?: unknown }).type)),
 	);
 }
 
@@ -222,7 +222,7 @@ describe("runAgent · synthesized terminal envelope", () => {
 			{
 				registry: stubRegistry(envelopeRuntime),
 				spawn: stubSpawn({
-					stdout: `${JSON.stringify({ type: "agent_end" })}\n`,
+					stdout: `${JSON.stringify({ type: "agent_settled" })}\n`,
 					exitCode: 0,
 				}),
 				http: emptyInbox,

@@ -172,7 +172,7 @@ export const scenario: Scenario = {
 			// 5. Wait for pi `turn_end` accumulation to land on the run row
 			// (warren-17a4). The pi PATH shim (pi-path-shim.sh) emits a pi RPC
 			// `turn_end` envelope with `message.usage.cost.total=0.000666`
-			// plus token counts, followed by `agent_end`. Warren's bridge
+			// plus token counts, followed by `agent_end` and `agent_settled`. Warren's bridge
 			// (src/runs/stream/bridge.ts) accumulates `turn_end` usage and calls
 			// `RunsRepo.attachStats` on `agent_end` — so by the time the
 			// run reaches a terminal state, cost_usd / tokens_input /

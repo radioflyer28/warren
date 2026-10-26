@@ -120,7 +120,12 @@ function accumulateWithShape(
 	const envelope = extractAgentEventEnvelope(event);
 	if (envelope === null) return;
 	const shape = usageShapeFor(runtime);
-	if (shape === null || envelope.type !== shape.envelopeType) return;
+	if (shape === null) return;
+	if (
+		envelope.type !== shape.envelopeType &&
+		!shape.additionalEnvelopeTypes?.includes(envelope.type)
+	)
+		return;
 	const reading = shape.read(envelope.payload);
 	if (reading === null) return;
 	applyReading(acc, reading, shape.mode);

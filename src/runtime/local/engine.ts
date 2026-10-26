@@ -210,7 +210,10 @@ export class LocalEngine {
 		await writeLocalRunManifest(this.roots, manifest).catch(() => {});
 
 		// Fire-and-forget: the drive loop terminalizes the record itself.
-		void driveLocalRun(this.store, record, spec, profile, this.deps.drive ?? {});
+		void driveLocalRun(this.store, record, spec, profile, {
+			...this.deps.drive,
+			piAuthFile: (this.serverEnv ?? process.env).WARREN_PI_AUTH_FILE,
+		});
 		return { runId: spec.runId, sandboxId, providerRunId: record.providerRunId };
 	}
 

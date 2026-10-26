@@ -28,7 +28,7 @@ emit() {
   printf '%s\n' "$1"
 }
 
-emit '{"type":"response","command":"prompt","success":true}'
+emit '{"id":"warren:initial","type":"response","command":"prompt","success":true,"data":{"disposition":"started"}}'
 emit '{"type":"agent_start"}'
 
 # env_keys_visible — bespoke envelope for scenario 30 (warren-fe96)
@@ -56,6 +56,7 @@ JSON
 )"
 
 # agent_end — terminal envelope; the drive loop closes our stdin on it.
-emit '{"type":"agent_end"}'
+emit '{"type":"agent_end","willRetry":false}'
+emit '{"type":"agent_settled","aborted":false}'
 
 exit 0

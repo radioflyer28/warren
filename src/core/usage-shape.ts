@@ -65,6 +65,7 @@ export interface UsageShape {
 	readonly runtime: RuntimeId;
 	/** `payload.type` this runtime's usage rides (e.g. `"turn_end"`). */
 	readonly envelopeType: string;
+	readonly additionalEnvelopeTypes?: readonly string[];
 	readonly mode: UsageAccumulationMode;
 	/**
 	 * Read the usage fields out of a carrier-matched envelope payload,
@@ -96,9 +97,11 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 const PI_USAGE_SHAPE: UsageShape = {
 	runtime: "pi",
 	envelopeType: "turn_end",
+	additionalEnvelopeTypes: ["compaction_end"],
 	mode: "sum",
 	read(payload) {
-		const usage = asRecord(asRecord(payload.message)?.usage);
+		const source = payload.type === "compaction_end" ? payload.result : payload.message;
+		const usage = asRecord(asRecord(source)?.usage);
 		if (usage === null) return null;
 		const costTotal = toNumber(asRecord(usage.cost)?.total);
 		const tokensInput = toNumber(usage.input);
@@ -165,7 +168,12 @@ const USAGE_SHAPE_PRIORITY: readonly UsageShape[] = [PI_USAGE_SHAPE, CLAUDE_CODE
  * and the in-process readers cannot drift. Derived, not hand-listed.
  */
 export const USAGE_ENVELOPE_TYPES: readonly string[] = [
-	...new Set(USAGE_SHAPE_PRIORITY.map((shape) => shape.envelopeType)),
+	...new Set(
+		USAGE_SHAPE_PRIORITY.flatMap((shape) => [
+			shape.envelopeType,
+			...(shape.additionalEnvelopeTypes ?? []),
+		]),
+	),
 ];
 
 /**
@@ -185,7 +193,11 @@ export function usageShapeFor(runtime: RuntimeId): UsageShape | null {
  */
 export function readUsage(envelope: AgentEventEnvelope): UsageReading | null {
 	for (const shape of USAGE_SHAPE_PRIORITY) {
-		if (envelope.type !== shape.envelopeType) continue;
+		if (
+			envelope.type !== shape.envelopeType &&
+			!shape.additionalEnvelopeTypes?.includes(envelope.type)
+		)
+			continue;
 		const reading = shape.read(envelope.payload);
 		if (reading !== null) return reading;
 	}

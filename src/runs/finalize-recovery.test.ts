@@ -216,7 +216,7 @@ describe("createFinalizeRecovery (warren-5202)", () => {
 			ts: T0.toISOString(),
 			kind: "state_change",
 			stream: "system",
-			payload: { type: "agent_end", stopReason: "error", errorMessage: "boom" },
+			payload: { type: "agent_settled", stopReason: "error", errorMessage: "boom" },
 		});
 		const { hook } = makeHook();
 		missPastGrace(hook, runId);

@@ -57,6 +57,11 @@ export function adapterFor(runtimeId: RuntimeId): AgentRuntimeAdapter {
 	return RUNTIME_ADAPTERS[runtimeId];
 }
 
+/** Operator credential behavior stays owned by the selected harness. */
+export function operatorAuthFor(runtimeId: string) {
+	return allAdapters().find((adapter) => adapter.runtimeId === runtimeId)?.operatorAuth;
+}
+
 /** Every adapter, in {@link KNOWN_RUNTIME_IDS} order. */
 export function allAdapters(): readonly AgentRuntimeAdapter[] {
 	return KNOWN_RUNTIME_IDS.map((id) => RUNTIME_ADAPTERS[id]);

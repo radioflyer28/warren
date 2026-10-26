@@ -39,7 +39,7 @@ emit() {
   printf '%s\n' "$1"
 }
 
-emit '{"type":"response","command":"prompt","success":true}'
+emit '{"id":"warren:initial","type":"response","command":"prompt","success":true,"data":{"disposition":"started"}}'
 emit '{"type":"agent_start"}'
 
 # env_keys_visible — bespoke envelope for scenario 25 (burrow-6f3f /
@@ -78,6 +78,7 @@ JSON
 
 # agent_end — terminal envelope; warren's bridge fires
 # persistInStreamPiUsage on this event and marks the run succeeded.
-emit '{"type":"agent_end"}'
+emit '{"type":"agent_end","willRetry":false}'
+emit '{"type":"agent_settled","aborted":false}'
 
 exit 0

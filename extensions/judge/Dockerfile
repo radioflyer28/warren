@@ -20,7 +20,7 @@
 FROM oven/bun:1.2 AS deps
 WORKDIR /app
 COPY package.json bun.lock ./
-# The package has no runtime dependencies today; --production keeps the stage
+# Install the pinned SDK runtime dependency; --production keeps the stage
 # honest if one is added, and --frozen-lockfile makes the build reproducible.
 RUN bun install --frozen-lockfile --production
 
@@ -31,6 +31,7 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
 COPY src ./src
+RUN bun -e "const p = await Bun.file(\"node_modules/@earendil-works/pi-coding-agent/package.json\").json(); if (p.version !== \"1.4.0\") throw new Error(\"Pi SDK version mismatch\"); await import(\"./src/pi-session.ts\")"
 
 # The extension owns its storage (extensions.md §3): verdicts and the poll
 # cursor live on a volume at /app/data, never in a warren table. The oven/bun

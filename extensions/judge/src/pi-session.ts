@@ -1,7 +1,7 @@
 /**
  * The pi-SDK adapter: builds the judge session factory over
- * `@earendil-works/pi-coding-agent`. Production-only — tests stub the
- * factory seam, so no test in this package calls a real provider.
+ * `@earendil-works/pi-coding-agent`. Production integration; loop tests stub the
+ * factory seam, while compatibility tests use the real SDK with a controlled provider.
  *
  * The session is created with `noTools: "builtin"` (the built-in coding
  * toolset — read/bash/edit/write — stripped) and exactly the three custom
@@ -25,11 +25,9 @@ import {
 	SettingsManager,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import type {
-	JudgeSession,
-	JudgeSessionFactory,
-	SessionStatsSnapshot,
-} from "./judge-loop.ts";
+import { join } from "node:path";
+import { prepareJudgeAuth } from "./pi-auth.ts";
+import type { JudgeSession, JudgeSessionFactory, SessionStatsSnapshot } from "./judge-loop.ts";
 import type { JudgeToolSpec } from "./judge-tools.ts";
 
 export class JudgeSessionError extends Error {
@@ -83,7 +81,7 @@ class JudgeResourceLoader implements ResourceLoader {
 		// 'this.runtime.sendMessage')` on the first prompt (warren-5fcf,
 		// hit live: every judgment errored). Fresh per call so no state
 		// leaks between judge sessions.
-		return { extensions: [], runtime: createExtensionRuntime(), errors: [] } as never;
+		return { extensions: [], runtime: createExtensionRuntime(), errors: [] };
 	}
 	public getSkills() {
 		return { skills: [], diagnostics: [] };
@@ -133,6 +131,7 @@ class PiJudgeSession implements JudgeSession {
 			readonly state: { readonly errorMessage?: string };
 			dispose(): void;
 		},
+		private readonly cleanup: () => void,
 	) {}
 
 	public async prompt(text: string): Promise<void> {
@@ -158,7 +157,11 @@ class PiJudgeSession implements JudgeSession {
 	}
 
 	public dispose(): void {
-		this.session.dispose();
+		try {
+			this.session.dispose();
+		} finally {
+			this.cleanup();
+		}
 	}
 }
 
@@ -169,6 +172,8 @@ export interface PiSessionFactoryOptions {
 	readonly cwd?: string;
 	/** Inject a pre-built runtime (tests/embedding); created per call otherwise. */
 	readonly modelRuntime?: ModelRuntime;
+	/** Trusted operator setting; never resolved from a judged repository. */
+	readonly authFile?: string;
 }
 
 /**
@@ -197,27 +202,35 @@ async function resolveModel(runtime: ModelRuntime, provider: string, model: stri
  * no transcript from a failed attempt leaks into a retry.
  */
 export function createPiSessionFactory(opts: PiSessionFactoryOptions): JudgeSessionFactory {
-	const cwd = opts.cwd ?? process.cwd();
-	let sharedRuntime: ModelRuntime | undefined = opts.modelRuntime;
 	return async ({ systemPrompt, tools }) => {
-		if (sharedRuntime === undefined) {
-			// ModelRuntime resolves per-provider credentials from the environment
-			// (ANTHROPIC_API_KEY / OPENAI_API_KEY / …) — only the configured
-			// provider's key is required.
-			sharedRuntime = await ModelRuntime.create();
+		const auth = prepareJudgeAuth(opts.provider, opts.authFile);
+		const cwd = opts.cwd ?? auth.directory;
+		try {
+			const runtime =
+				opts.modelRuntime ??
+				(await ModelRuntime.create({
+					authPath: auth.authPath,
+					modelsPath: null,
+					modelsStorePath: join(auth.directory, "models"),
+					allowModelNetwork: false,
+				}));
+			const model = await resolveModel(runtime, opts.provider, opts.model);
+			const { session } = await createAgentSession({
+				cwd,
+				modelRuntime: runtime,
+				model,
+				noTools: "builtin",
+				tools: tools.map((tool) => tool.name),
+				excludeTools: ["mcp__*"],
+				customTools: tools.map(toToolDefinition),
+				resourceLoader: new JudgeResourceLoader(systemPrompt),
+				sessionManager: SessionManager.inMemory(cwd),
+				settingsManager: SettingsManager.inMemory(),
+			});
+			return new PiJudgeSession(session, auth.cleanup);
+		} catch (error) {
+			auth.cleanup();
+			throw error;
 		}
-		const runtime = sharedRuntime;
-		const model = await resolveModel(runtime, opts.provider, opts.model);
-		const { session } = await createAgentSession({
-			cwd,
-			modelRuntime: runtime,
-			model,
-			noTools: "builtin",
-			customTools: tools.map(toToolDefinition),
-			resourceLoader: new JudgeResourceLoader(systemPrompt),
-			sessionManager: SessionManager.inMemory(cwd),
-			settingsManager: SettingsManager.inMemory(),
-		});
-		return new PiJudgeSession(session);
 	};
 }

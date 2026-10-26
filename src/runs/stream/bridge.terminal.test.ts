@@ -84,11 +84,11 @@ describe("bridgeRunStream — in-stream terminal detection", () => {
 		expect(result.terminalDetected).toBeUndefined();
 	});
 
-	test("warren-2687: pi agent_end envelope sets terminalDetected and breaks the loop", async () => {
+	test("warren-2687: pi agent_settled envelope sets terminalDetected and breaks the loop", async () => {
 		const piEnd = evt(sandboxRunId, 1, {
 			kind: "state_change",
 			stream: "system",
-			payload: { type: "agent_end", messages: [] },
+			payload: { type: "agent_settled", messages: [] },
 		});
 		const trailing = evt(sandboxRunId, 2, { kind: "text", payload: { text: "post-terminal" } });
 		const result = await bridgeRunStream({
@@ -105,11 +105,11 @@ describe("bridgeRunStream — in-stream terminal detection", () => {
 		expect(seqs).toEqual([1]);
 	});
 
-	test("warren-2687: pi agent_end on non-system stream does not set terminalDetected", async () => {
+	test("warren-2687: pi agent_settled on non-system stream does not set terminalDetected", async () => {
 		const offStream = evt(sandboxRunId, 1, {
 			kind: "state_change",
 			stream: "stdout",
-			payload: { type: "agent_end", messages: [] },
+			payload: { type: "agent_settled", messages: [] },
 		});
 		const result = await bridgeRunStream({
 			runId,

@@ -77,16 +77,16 @@ export function source(
 }
 
 /**
- * Build a pi-shaped `agent_end` envelope as it lands after burrow's pi
- * parser (kind="state_change", stream="system", payload.type="agent_end").
+ * Build a pi-shaped `agent_settled` envelope as it lands after burrow's pi
+ * parser (kind="state_change", stream="system", payload.type="agent_settled").
  * Mirrors burrow `src/runtime/parsers/pi.ts:86-98` (warren-36c0). The
- * synthetic `{kind:"agent_end"}` shape never appears in production.
+ * synthetic `{kind:"agent_settled"}` shape never appears in production.
  */
 export function piAgentEnd(sandboxRunId: string, seq: number): StreamEventView {
 	return evt(sandboxRunId, seq, {
 		kind: "state_change",
 		stream: "system",
-		payload: { type: "agent_end", messages: [] },
+		payload: { type: "agent_settled", messages: [] },
 	});
 }
 
@@ -95,7 +95,7 @@ export function piAgentEnd(sandboxRunId: string, seq: number): StreamEventView {
  * cacheRead,cacheWrite,cost.total}` — see burrow's
  * `src/runtime/parsers/__golden__/pi-v0.74.0-anthropic-*.jsonl`. The
  * bridge accumulates these as events flow through and persists the
- * run-level totals at `agent_end`, no PiStatsClient required.
+ * run-level totals at `agent_settled`, no PiStatsClient required.
  */
 export function piTurnEnd(
 	sandboxRunId: string,
@@ -172,16 +172,12 @@ export function piMessageDelta(
 				contentIndex: 0,
 				delta: opts.delta,
 			},
-			partial: {
-				role: "assistant",
-				content: [],
-				usage: {
-					input: 10,
-					output: 5,
-					cacheRead: 0,
-					cacheWrite: 0,
-					cost: { total: opts.costTotal ?? 0 },
-				},
+			usage: {
+				input: 10,
+				output: 5,
+				cacheRead: 0,
+				cacheWrite: 0,
+				cost: { total: opts.costTotal ?? 0 },
 			},
 		},
 	});
