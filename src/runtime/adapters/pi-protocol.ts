@@ -72,22 +72,25 @@ class PiProtocol {
 			return [this.finish("state_probe_rejected", "Pi rejected the idle-state query")];
 		}
 		if (
-			!this.started &&
+			(!this.started || this.deferred !== undefined) &&
 			state.isStreaming === false &&
 			state.isCompacting === false &&
 			state.pendingMessageCount === 0
 		) {
+			if (this.deferred) {
+				this.settled = true;
+				return [this.deferred];
+			}
 			return [this.finish("prompt_handled_without_run")];
 		}
+		this.deferred = undefined;
 		return [];
 	}
 
 	private afterStartup(): AdapterRuntimeEvent[] {
-		if (this.deferred) {
-			this.settled = true;
-			return [this.deferred];
-		}
-		if (this.accepted || this.started) return [];
+		// A delayed prompt can start another run after the saved settlement.
+		// Confirm idle state after every startup acknowledgement before replaying it.
+		if (!this.deferred && (this.accepted || this.started)) return [];
 		this.probeId = `warren:state:${randomUUID()}`;
 		return [
 			{

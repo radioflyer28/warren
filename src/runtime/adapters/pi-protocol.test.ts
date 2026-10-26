@@ -96,8 +96,52 @@ test("queued startup steering is correlated before settlement", () => {
 	const early = parse('{"type":"agent_settled","aborted":false}');
 	expect(early.some((event) => piAdapter.shouldCloseStdinOnEvent?.(event))).toBe(false);
 	const final = parse(JSON.stringify({ ...response("queued"), id: commands[1].id }));
-	expect(final.at(-1)?.payload).toMatchObject({ type: "agent_settled" });
+	const probe = final.at(-1);
+	if (!probe) throw new Error("Expected an idle-state probe");
+	const command = JSON.parse(piAdapter.autoRespondToEvent?.(probe)?.stdin ?? "{}");
+	const confirmed = parse(
+		JSON.stringify({
+			type: "response",
+			command: "get_state",
+			id: command.id,
+			success: true,
+			data: { isStreaming: false, isCompacting: false, pendingMessageCount: 0 },
+		}),
+	);
+	expect(confirmed.at(-1)?.payload).toMatchObject({ type: "agent_settled" });
 });
+
+test.each(["started", "queued"])(
+	"delayed %s startup prompt invalidates an earlier settlement while busy",
+	(disposition) => {
+		const stdin = encodePiStdin("task", [{ body: "delayed", priority: "normal" }]);
+		const commands = stdin
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line));
+		const parse = createPiEventParser({ argv: ["pi"], stdin });
+		parse(JSON.stringify(response("started")));
+		parse('{"type":"agent_start"}');
+		parse('{"type":"agent_settled","aborted":false}');
+		const acknowledged = parse(JSON.stringify({ ...response(disposition), id: commands[1].id }));
+		expect(acknowledged.some((event) => piAdapter.shouldCloseStdinOnEvent?.(event))).toBe(false);
+		const probe = acknowledged.at(-1);
+		if (!probe) throw new Error("Expected an idle-state probe");
+		const command = JSON.parse(piAdapter.autoRespondToEvent?.(probe)?.stdin ?? "{}");
+		const busy = parse(
+			JSON.stringify({
+				type: "response",
+				command: "get_state",
+				id: command.id,
+				success: true,
+				data: { isStreaming: true, isCompacting: false, pendingMessageCount: 0 },
+			}),
+		);
+		expect(busy.some((event) => piAdapter.shouldCloseStdinOnEvent?.(event))).toBe(false);
+		const final = parse('{"type":"agent_settled","aborted":false}');
+		expect(final.some((event) => piAdapter.shouldCloseStdinOnEvent?.(event))).toBe(true);
+	},
+);
 
 test("provider error recovery, cancellation and unexpected zero exit", () => {
 	const completion = new RuntimeCompletion("pi");

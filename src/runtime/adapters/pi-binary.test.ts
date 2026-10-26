@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { piAdapter } from "./pi.ts";
-import type { SpawnCommand } from "./types.ts";
+import type { SpawnCommand, SteeringMessage } from "./types.ts";
 
 const cli = process.env.WARREN_PI_TEST_CLI;
 type WireEvent = Record<string, unknown>;
@@ -13,7 +13,7 @@ function required<T>(value: T | undefined): T {
 	return value;
 }
 
-function controlledProvider(root: string) {
+function controlledProvider(root: string, useTool = true) {
 	let calls = 0;
 	return Bun.serve({
 		port: 0,
@@ -21,7 +21,7 @@ function controlledProvider(root: string) {
 			await request.json();
 			calls++;
 			const delta =
-				calls === 1
+				calls === 1 && useTool
 					? {
 							role: "assistant",
 							tool_calls: [
@@ -46,7 +46,7 @@ function controlledProvider(root: string) {
 				usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 },
 			});
 			return new Response(
-				`data: ${JSON.stringify(chunk(delta, null))}\n\ndata: ${JSON.stringify(chunk({}, calls === 1 ? "tool_calls" : "stop"))}\n\ndata: [DONE]\n\n`,
+				`data: ${JSON.stringify(chunk(delta, null))}\n\ndata: ${JSON.stringify(chunk({}, calls === 1 && useTool ? "tool_calls" : "stop"))}\n\ndata: [DONE]\n\n`,
 				{ headers: { "content-type": "text/event-stream" } },
 			);
 		},
@@ -145,16 +145,25 @@ async function collect(
 	return events;
 }
 
-async function drive(binary: string, root: string, agentDir: string) {
+async function drive(
+	binary: string,
+	root: string,
+	agentDir: string,
+	options: { pendingMessages?: readonly SteeringMessage[]; extension?: string } = {},
+) {
 	const context = {
 		runId: "contract",
 		prompt: "Read fixture.txt",
-		pendingMessages: [],
+		pendingMessages: options.pendingMessages ?? [],
 		workspacePath: root,
 		frontmatter: {
 			provider: "warren-contract",
 			model: "controlled",
-			pi: { tools: "read", approve: true },
+			pi: {
+				tools: "read",
+				approve: true,
+				...(options.extension ? { extensions: true, extension: [options.extension] } : {}),
+			},
 		},
 	};
 	await piAdapter.prepareWorkspace?.(context);
@@ -217,6 +226,41 @@ test.skipIf(!cli)(
 			).toHaveProperty("session_id");
 			expect(await readFile(join(root, "fixture.txt"), "utf8")).toBe("fixture content");
 			await saveCapture(events, root);
+		} finally {
+			server.stop(true);
+			await rm(root, { recursive: true, force: true });
+		}
+	},
+	30000,
+);
+
+test.skipIf(!cli)(
+	"Pi 1.4.0 completes delayed startup steering after an earlier settlement",
+	async () => {
+		if (!cli) return;
+		const root = await mkdtemp(join(tmpdir(), "warren-pi-delayed-"));
+		const server = controlledProvider(root, false);
+		try {
+			const agentDir = join(root, "agent-home");
+			await configureProvider(agentDir, required(server.port));
+			const extension = join(root, "delay.ts");
+			await writeFile(
+				extension,
+				`export default function(pi) {
+			pi.on("input", async event => {
+				if (event.text.includes("[STEERING]"))
+					await new Promise(resolve => setTimeout(resolve, 700));
+				return { action: "continue" };
+			});
+		}`,
+			);
+			const events = await drive(cli, root, agentDir, {
+				pendingMessages: [{ body: "delayed steering", priority: "normal" }],
+				extension,
+			});
+			expect(events.filter((event) => event.type === "agent_settled")).toHaveLength(2);
+			expect(events.filter((event) => event.type === "turn_end")).toHaveLength(2);
+			expect(events.at(-1)?.type).toBe("agent_settled");
 		} finally {
 			server.stop(true);
 			await rm(root, { recursive: true, force: true });
